@@ -1,0 +1,107 @@
+.sidebar {
+  width: 280px;
+  background: var(--white);
+  border-right: 1.5px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.sidebarHeader {
+  padding: 1rem 1.1rem 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebarTitle {
+  font-size: 0.83rem;
+  font-weight: 600;
+  color: var(--forest);
+  letter-spacing: 0.01em;
+}
+
+.newBtn {
+  background: var(--forest);
+  color: var(--amber-light);
+  border: none;
+  border-radius: 7px;
+  padding: 5px 12px;
+  font-size: 0.78rem;
+  font-family: 'Mukta', sans-serif;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.newBtn:hover { background: var(--forest-light); }
+
+.list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem 0;
+}
+
+.empty {
+  font-size: 0.8rem;
+  color: var(--slate-light);
+  padding: 1.25rem 1rem;
+  text-align: center;
+  font-family: 'Lora', serif;
+  font-style: italic;
+}
+
+.convItem {
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0.6rem 1.1rem;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transition: background 0.12s;
+  border-left: 3px solid transparent;
+}
+.convItem:hover  { background: var(--moss-light); }
+
+.active {
+  background: var(--moss-light);
+  border-left-color: var(--forest-light);
+}
+
+.convTitle {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--forest);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+.convDate {
+  font-size: 0.68rem;
+  color: var(--slate-light);
+  font-family: 'Mukta', sans-serif;
+}
+
+/* Mobile: slide-in drawer */
+@media (max-width: 720px) {
+  .sidebar {
+    position: fixed;
+    left: 0; top: 0; bottom: 0;
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    box-shadow: 4px 0 20px rgba(0,0,0,0.15);
+  }
+  .sidebar.open { transform: translateX(0); }
+  .overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.3); z-index: 99;
+  }
+}

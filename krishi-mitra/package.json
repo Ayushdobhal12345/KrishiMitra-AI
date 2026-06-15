@@ -1,0 +1,14 @@
+{
+  "name": "krishi-mitra",
+  "version": "1.0.0",
+  "description": "AI-Powered Crop Advisory Chatbot for Uttarakhand Mountain Farmers",
+  "private": true,
+  "workspaces": ["backend", "frontend"],
+  "scripts": {
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "install:all": "cd backend && npm install && cd ../frontend && npm install",
+    "start:backend": "cd backend && npm start",
+    "start:frontend": "cd frontend && npm run build && npm run preview"
+  }
+}

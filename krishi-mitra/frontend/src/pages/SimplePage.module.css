@@ -1,0 +1,38 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: var(--parchment);
+}
+
+.main {
+  flex: 1;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 52px 24px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.heading {
+  font-family: 'Lora', serif;
+  font-size: clamp(1.5rem, 4vw, 2rem);
+  font-weight: 600;
+  color: var(--forest);
+  margin: 0;
+}
+
+.body {
+  font-family: 'Mukta', sans-serif;
+  font-size: 1rem;
+  color: var(--slate);
+  line-height: 1.7;
+  margin: 0;
+}
+
+@media (max-width: 480px) {
+  .main {
+    padding: 32px 16px 40px;
+  }
+}
