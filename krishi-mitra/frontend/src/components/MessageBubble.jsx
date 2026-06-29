@@ -55,9 +55,10 @@ export default function MessageBubble({ msg }) {
     if (feedback || submitting || !msg.messageId) return
     setSubmitting(true)
     try {
+      const supId = await getSupervisorId()
       await apiFetch('/feedback', {
         method: 'POST',
-        body: { messageId: msg.messageId, conversationId: msg.conversationId, supervisorId: getSupervisorId(), rating },
+        body: { messageId: msg.messageId, conversationId: msg.conversationId, supervisorId: supId, rating },
       })
       setFeedback(rating)
     } catch { /* silent */ } finally { setSubmitting(false) }

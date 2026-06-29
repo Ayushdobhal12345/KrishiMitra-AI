@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
+import { createClient } from '@supabase/supabase-js'
 import {
   getOrCreateSession,
   createConversation,
@@ -12,7 +13,15 @@ import {
 } from './db.js'
 import { generateResponse, extractSeverity, extractCrop } from './gemini.js'
 
-const fastify = Fastify({ logger: true })
+// ── BUG FIX: raise bodyLimit to 20MB for base64 image/PDF uploads ──
+const fastify = Fastify({ logger: true, bodyLimit: 20 * 1024 * 1024 })
+
+// Supabase client for JWT verification (uses anon key — verifies user JWTs)
+const supabaseAuth = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY,
+  { auth: { persistSession: false } }
+)
 
 // ── CORS ───────────────────────────────────────────────────
 await fastify.register(cors, {
@@ -20,53 +29,71 @@ await fastify.register(cors, {
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
 })
 
-// ── Empty body parser (Fastify v5) ─────────────────────────
+// ── Body parser (Fastify v5) ────────────────────────────────
 fastify.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
   if (!body || body === '') return done(null, {})
   try { done(null, JSON.parse(body)) } catch (e) { done(e) }
 })
 
+// ── Auth middleware ─────────────────────────────────────────
+async function verifyToken(request) {
+  const authHeader = request.headers['authorization']
+  if (!authHeader?.startsWith('Bearer ')) return null
+  const token = authHeader.slice(7)
+  const { data: { user }, error } = await supabaseAuth.auth.getUser(token)
+  if (error || !user) return null
+  return user
+}
+
+async function requireAuth(request, reply) {
+  const user = await verifyToken(request)
+  if (!user) {
+    return reply.status(401).send({ error: 'Unauthorized — please log in' })
+  }
+  request.user = user
+  return user
+}
+
 // ── Routes ─────────────────────────────────────────────────
 
-// Health check
+// Health check (public)
 fastify.get('/health', async () => ({
   status: 'ok',
   service: 'Krishi Mitra API',
   timestamp: new Date().toISOString(),
 }))
 
-// POST /chat – send a message and get AI response
+// POST /chat – send a message and get AI response (protected)
 fastify.post('/chat', async (request, reply) => {
-  // FIX #1: also destructure attachments from body
+  const user = await requireAuth(request, reply)
+  if (!user) return
+
   const { message, supervisorId, conversationId, attachments } = request.body
 
   if (!message?.trim()) return reply.status(400).send({ error: 'message is required' })
-  if (!supervisorId?.trim()) return reply.status(400).send({ error: 'supervisorId is required' })
+
+  const resolvedSupervisorId = user.id
 
   try {
-    // Get or create session
-    const sessionId = await getOrCreateSession(supervisorId)
+    const sessionId = await getOrCreateSession(resolvedSupervisorId)
 
-    // Get or create conversation
     let convId = conversationId
     if (!convId) {
-      convId = await createConversation(sessionId, supervisorId, message.trim())
+      convId = await createConversation(sessionId, resolvedSupervisorId, message.trim())
     }
 
-    // Fetch conversation history for context
     const history = await getConversationMessages(convId)
-
-    // Save user message
     await saveMessage(convId, 'user', message.trim())
 
-    // FIX #1: pass attachments through to generateResponse
-    const { text, tokensUsed } = await generateResponse(message.trim(), history, attachments || [])
+    // ── BUG FIX: log attachment count so you can confirm they arrive ──
+    if (attachments?.length) {
+      fastify.log.info(`📎 Received ${attachments.length} attachment(s) with types: ${attachments.map(a => a.mediaType).join(', ')}`)
+    }
 
-    // Save AI response
+    const { text, tokensUsed } = await generateResponse(message.trim(), history, attachments || [])
     const messageId = await saveMessage(convId, 'assistant', text, tokensUsed)
 
-    // Log query analytics (fire and forget)
-    logQuery(supervisorId, {
+    logQuery(resolvedSupervisorId, {
       cropMentioned: extractCrop(message),
       queryLength: message.length,
       responseLength: text.length,
@@ -86,13 +113,20 @@ fastify.post('/chat', async (request, reply) => {
   }
 })
 
-// GET /conversations/:supervisorId – get past conversations
+// GET /conversations/:supervisorId – get past conversations (protected)
 fastify.get('/conversations/:supervisorId', async (request, reply) => {
-  const { supervisorId } = request.params
-  if (!supervisorId) return reply.status(400).send({ error: 'supervisorId is required' })
+  const user = await requireAuth(request, reply)
+  if (!user) return
+
+  const requestedId = request.params.supervisorId
+  if (requestedId !== user.id) {
+    return reply.status(403).send({ error: 'Forbidden' })
+  }
 
   try {
-    const conversations = await getSupervisorConversations(supervisorId)
+    const limit  = Math.min(parseInt(request.query.limit  || '20'), 50)
+    const offset = parseInt(request.query.offset || '0')
+    const conversations = await getSupervisorConversations(user.id, limit, offset)
     return reply.send({ conversations })
   } catch (err) {
     fastify.log.error(err)
@@ -100,8 +134,16 @@ fastify.get('/conversations/:supervisorId', async (request, reply) => {
   }
 })
 
-// GET /conversations/:supervisorId/:conversationId – get messages for a conversation
+// GET /conversations/:supervisorId/:conversationId – get messages (protected)
 fastify.get('/conversations/:supervisorId/:conversationId', async (request, reply) => {
+  const user = await requireAuth(request, reply)
+  if (!user) return
+
+  const requestedId = request.params.supervisorId
+  if (requestedId !== user.id) {
+    return reply.status(403).send({ error: 'Forbidden' })
+  }
+
   const { conversationId } = request.params
   try {
     const messages = await getConversationMessages(conversationId)
@@ -112,19 +154,22 @@ fastify.get('/conversations/:supervisorId/:conversationId', async (request, repl
   }
 })
 
-// POST /feedback – submit feedback on a response
+// POST /feedback – submit feedback (protected)
 fastify.post('/feedback', async (request, reply) => {
-  const { messageId, conversationId, supervisorId, rating, comment } = request.body
+  const user = await requireAuth(request, reply)
+  if (!user) return
 
-  if (!messageId || !supervisorId || !rating) {
-    return reply.status(400).send({ error: 'messageId, supervisorId, and rating are required' })
+  const { messageId, conversationId, rating, comment } = request.body
+
+  if (!messageId || !rating) {
+    return reply.status(400).send({ error: 'messageId and rating are required' })
   }
   if (rating !== 1 && rating !== -1) {
-    return reply.status(400).send({ error: 'rating must be 1 (helpful) or -1 (not helpful)' })
+    return reply.status(400).send({ error: 'rating must be 1 or -1' })
   }
 
   try {
-    await saveFeedback(messageId, conversationId, supervisorId, rating, comment)
+    await saveFeedback(messageId, conversationId, user.id, rating, comment)
     return reply.send({ success: true })
   } catch (err) {
     fastify.log.error(err)

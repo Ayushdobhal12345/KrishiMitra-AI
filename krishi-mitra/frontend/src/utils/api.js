@@ -1,7 +1,13 @@
+import { supabase } from '../lib/supabase.js'
+
 export const API = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
-// Generate or retrieve a persistent supervisor ID
-export function getSupervisorId() {
+// Returns the logged-in user's UUID as supervisorId
+export async function getSupervisorId() {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (user) return user.id
+
+  // Fallback for unauthenticated contexts (shouldn't happen in protected routes)
   let id = localStorage.getItem('krishi_supervisor_id')
   if (!id) {
     id = 'sup_' + Math.random().toString(36).slice(2) + Date.now().toString(36)
@@ -10,12 +16,45 @@ export function getSupervisorId() {
   return id
 }
 
+// Get the current session JWT — uses getUser() for a fresh verified token
+async function getAuthToken() {
+  // getUser() hits the Supabase server and always returns a fresh valid token
+  // getSession() can return a stale cached token that the backend rejects
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return null
+
+  const { data: { session } } = await supabase.auth.getSession()
+  return session?.access_token || null
+}
+
 export async function apiFetch(path, options = {}) {
+  const token = await getAuthToken()
+
+  const headers = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
   const res = await fetch(`${API}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
   })
+
+  // If 401, the session may have expired — try refreshing once
+  if (res.status === 401) {
+    const { data: { session } } = await supabase.auth.refreshSession()
+    if (session?.access_token) {
+      const retryRes = await fetch(`${API}${path}`, {
+        ...options,
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        body: options.body ? JSON.stringify(options.body) : undefined,
+      })
+      const retryData = await retryRes.json()
+      if (!retryRes.ok) throw new Error(retryData.error || 'Request failed')
+      return retryData
+    }
+    throw new Error('Session expired — please log in again')
+  }
+
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || 'Request failed')
   return data

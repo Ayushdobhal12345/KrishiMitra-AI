@@ -76,13 +76,13 @@ export async function getConversationMessages(conversationId) {
   return data || []
 }
 
-export async function getSupervisorConversations(supervisorId, limit = 20) {
+export async function getSupervisorConversations(supervisorId, limit = 20, offset = 0) {
   const { data, error } = await supabase
     .from('conversations')
     .select('id, title, created_at, updated_at')
     .eq('supervisor_id', supervisorId)
     .order('updated_at', { ascending: false })
-    .limit(limit)
+    .range(offset, offset + limit - 1)
 
   if (error) throw new Error(`Fetch conversations failed: ${error.message}`)
   return data || []

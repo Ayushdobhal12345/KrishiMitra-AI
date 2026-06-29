@@ -1,26 +1,52 @@
 import { useEffect, useState } from 'react'
 import { apiFetch, getSupervisorId } from '../utils/api.js'
+import { useAuth } from '../context/AuthContext.jsx'
+
+const PAGE_SIZE = 10
 
 export default function Sidebar({ currentConvId, onSelectConversation, onNewChat, open, onClose }) {
   const [conversations, setConversations] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading]             = useState(true)
+  const [page, setPage]                   = useState(0)
+  const [hasMore, setHasMore]             = useState(false)
+  const { user } = useAuth()
 
   useEffect(() => {
-    const supId = getSupervisorId()
-    apiFetch(`/conversations/${supId}`)
-      .then(d => setConversations(d.conversations || []))
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [currentConvId])
+    if (!user) { setLoading(false); return }
+    setPage(0)
+    setConversations([])
+    loadPage(0, true)
+  }, [currentConvId, user])
+
+  async function loadPage(pageNum, reset = false) {
+    setLoading(true)
+    try {
+      const supId = await getSupervisorId()
+      // fetch one extra to know if there's a next page
+      const d = await apiFetch(`/conversations/${supId}?limit=${PAGE_SIZE + 1}&offset=${pageNum * PAGE_SIZE}`)
+      const rows = d.conversations || []
+      const hasNext = rows.length > PAGE_SIZE
+      const slice = rows.slice(0, PAGE_SIZE)
+
+      setConversations(reset ? slice : prev => [...prev, ...slice])
+      setHasMore(hasNext)
+      setPage(pageNum)
+    } catch {
+      setConversations(prev => reset ? [] : prev)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+
+
+
 
   return (
     <>
       {/* Mobile overlay */}
       {open && (
-        <div
-          className="fixed inset-0 bg-black/30 z-[99] md:hidden"
-          onClick={onClose}
-        />
+        <div className="fixed inset-0 bg-black/30 z-[99] md:hidden" onClick={onClose} />
       )}
 
       <aside
@@ -44,12 +70,13 @@ export default function Sidebar({ currentConvId, onSelectConversation, onNewChat
 
         {/* List */}
         <div className="flex-1 overflow-y-auto py-2">
-          {loading && (
+          {loading && conversations.length === 0 && (
             <p className="text-xs text-gray-400 px-4 py-5 text-center font-lora italic">Loading…</p>
           )}
           {!loading && conversations.length === 0 && (
             <p className="text-xs text-gray-400 px-4 py-5 text-center font-lora italic">No past conversations yet.</p>
           )}
+
           {conversations.map(conv => (
             <button
               key={conv.id}
@@ -68,7 +95,33 @@ export default function Sidebar({ currentConvId, onSelectConversation, onNewChat
               </span>
             </button>
           ))}
+
+          {/* Load more */}
+          {hasMore && !loading && (
+            <button
+              onClick={() => loadPage(page + 1)}
+              className="w-full text-xs font-mukta text-forest/60 hover:text-forest py-3 border-none bg-transparent cursor-pointer hover:bg-moss transition-colors"
+            >
+              Load more ↓
+            </button>
+          )}
+
+          {loading && conversations.length > 0 && (
+            <p className="text-xs text-gray-400 px-4 py-2 text-center font-lora italic">Loading…</p>
+          )}
         </div>
+
+        {/* Pagination footer — shows count */}
+        {conversations.length > 0 && (
+          <div className="px-4 py-2 border-t border-forest-border flex items-center justify-between">
+            <span className="text-[0.65rem] font-mukta text-gray-400">
+              {conversations.length} conversation{conversations.length !== 1 ? 's' : ''}
+            </span>
+            {hasMore && (
+              <span className="text-[0.65rem] font-mukta text-gray-400">more available ↓</span>
+            )}
+          </div>
+        )}
       </aside>
     </>
   )

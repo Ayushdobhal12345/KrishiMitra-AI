@@ -1,20 +1,10 @@
-# Note
-To start the frontend
-go to cd krishi-mitra
-cd frontend
-npm install
-npm run dev
-
-**To test login:** use any email + password (e.g. `ayush@gmail.com` / `1234`) — authentication is a placeholder and will be connected to Supabase in a future release.
-
-
 # 🌾 Krishi Mitra – AI-Powered Crop Advisory Chatbot
 
 > Mandakini Organic Produce Collective · Uttarakhand Mountain Farming
 
 A full-stack AI chatbot that gives field supervisors instant, practical crop advisory using Google Gemini AI, with all conversations stored in Supabase PostgreSQL.
 
-
+---
 
 ## Project Structure
 
@@ -30,69 +20,40 @@ krishi-mitra/
 ├── frontend/
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── Navbar.jsx          # Top navigation bar with page links
-│   │   │   ├── Footer.jsx          # Site footer
-│   │   │   ├── Card.jsx            # Reusable feature card
-│   │   │   ├── MessageBubble.jsx   # Chat message renderer
-│   │   │   └── Sidebar.jsx         # Conversation history drawer
+│   │   │   ├── Header.jsx / .module.css
+│   │   │   ├── MessageBubble.jsx / .module.css
+│   │   │   └── Sidebar.jsx / .module.css
 │   │   ├── pages/
-│   │   │   ├── Home.jsx            # Landing page with hero + card grid
-│   │   │   ├── Chat.jsx            # Main AI chat interface
-│   │   │   ├── About.jsx           # About page
-│   │   │   ├── Dashboard.jsx       # Supervisor dashboard (coming soon)
-│   │   │   └── Login.jsx           # Login form with validation
+│   │   │   └── Chat.jsx / .module.css
 │   │   ├── utils/
-│   │   │   └── api.js              # API helper + response parser
-│   │   ├── App.jsx                 # Route definitions
+│   │   │   └── api.js     # API helper + response parser
+│   │   ├── App.jsx
 │   │   ├── main.jsx
-│   │   └── index.css               # Tailwind directives + custom utilities
+│   │   └── index.css
 │   ├── index.html
 │   ├── vite.config.js
-│   ├── tailwind.config.js
-│   ├── postcss.config.js
-│   ├── .env
+│   ├── .env.example
 │   └── package.json
-├── .gitignore
+├── package.json           # Root scripts
 └── README.md
 ```
 
 ---
 
-## Routes
-
-| Path | Page | Description |
-|------|------|-------------|
-| `/` | Home | Hero section + feature cards grid |
-| `/login` | Login | Email + password form, redirects to chat |
-| `/chat` | Chat | AI advisory chat interface |
-| `/about` | About | Project and mission info |
-| `/dashboard` | Dashboard | Supervisor overview (in development) |
-
----
-
 ## Tech Stack
 
-| Layer | Technology |
-|-------|------------|
-| Frontend | React 18 + Vite + Tailwind CSS v3 |
-| Routing | React Router DOM v6 |
-| Backend | Node.js + Fastify v5 |
-| AI | Google Gemini 1.5 Flash API |
+| Layer    | Technology |
+|----------|-----------|
+| Frontend | React 18 + Vite + CSS Modules |
+| Backend  | Node.js + Fastify v5 |
+| AI       | Google Gemini 1.5 Flash API |
 | Database | PostgreSQL via Supabase |
 
 ---
 
 ## Setup Instructions
 
-### Step 1 — Frontend
-
-```bash
-cd krishi-mitra/frontend
-npm install
-npm run dev     # → http://localhost:5173
-```
-
-### Step 2 — Supabase Database
+### Step 1 — Supabase Database
 
 1. Go to [supabase.com](https://supabase.com) → Create a new project
 2. Open **SQL Editor** in the Supabase dashboard
@@ -100,21 +61,21 @@ npm run dev     # → http://localhost:5173
 4. Click **Run** — this creates all tables and indexes
 5. Go to **Settings → API** and copy:
    - **Project URL** (e.g. `https://xyz.supabase.co`)
-   - **Service Role Key** (under "Project API keys")
+   - **Service Role Key** (under "Project API keys" — use the secret service role key)
 
-### Step 3 — Gemini API Key
+### Step 2 — Gemini API Key
 
 1. Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
 2. Create a new API key (free tier available)
 
-### Step 4 — Backend
+### Step 3 — Backend Setup
 
-```bash
-cd krishi-mitra/backend
+```powershell
+cd backend
 
 # Copy and fill the env file
-cp .env.example .env   # Windows: copy .env.example .env
-# Edit .env with your keys
+copy .env.example .env
+# Edit .env with your keys (see below)
 
 npm install
 npm run dev     # development with auto-reload
@@ -129,6 +90,19 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_KEY=eyJ...your_service_role_key...
 PORT=3001
 FRONTEND_URL=http://localhost:5173
+```
+
+### Step 4 — Frontend Setup
+
+```powershell
+cd frontend
+
+# Copy env file
+copy .env.example .env
+# .env already has: VITE_API_URL=http://localhost:3001
+
+npm install
+npm run dev     # → http://localhost:5173
 ```
 
 ---
@@ -196,9 +170,6 @@ FRONTEND_URL=http://localhost:5173
 
 ## Features
 
-- 🏠 Multi-page app with Home, Chat, About, Dashboard, Login routes
-- 🎨 Fully styled with Tailwind CSS — no CSS Modules
-- 🔐 Login form with validation (Supabase auth coming soon)
 - 💬 Multi-turn conversations with full history
 - 🗄️ All conversations saved to Supabase PostgreSQL
 - 📋 Sidebar showing past conversation history
@@ -207,4 +178,4 @@ FRONTEND_URL=http://localhost:5173
 - 🔴 Severity pills (Low / Medium / High)
 - ⚠️ Mandatory disclaimer on every AI response
 - 📱 Mobile-responsive with slide-in sidebar
-- 📄 Export chat as PDF
+- 🔒 No user login needed — browser fingerprint ID

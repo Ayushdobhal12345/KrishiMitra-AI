@@ -26,10 +26,15 @@ export default function Chat() {
   const [isOnline, setIsOnline]             = useState(navigator.onLine)
   const [exportingPdf, setExportingPdf]     = useState(false)
   const [attachedFiles, setAttachedFiles]   = useState([])
+  const [supervisorId, setSupervisorId]     = useState(null)
 
   const chatEndRef   = useRef(null)
   const textareaRef  = useRef(null)
   const fileInputRef = useRef(null)
+
+  useEffect(() => {
+    getSupervisorId().then(id => setSupervisorId(id))
+  }, [])
 
   useEffect(() => {
     const up   = () => setIsOnline(true)
@@ -61,12 +66,148 @@ export default function Chat() {
     setAttachedFiles(prev => prev.filter(f => f.name !== name))
   }
 
+  // ─── Voice state ────────────────────────────────────────────────────────────
+  const [listening, setListening]   = useState(false)
+  const [transcript, setTranscript] = useState('')
+  const recognitionRef   = useRef(null)
+  const transcriptRef    = useRef('')
+  const attachedFilesRef = useRef([])
+  const audioCtxRef      = useRef(null)   // Web Audio context
+  const streamRef        = useRef(null)   // Raw mic stream
+
+  useEffect(() => { transcriptRef.current = transcript }, [transcript])
+  useEffect(() => { attachedFilesRef.current = attachedFiles }, [attachedFiles])
+
+  // Tear down audio pipeline (stream + AudioContext)
+  function _stopAudio() {
+    streamRef.current?.getTracks().forEach(t => t.stop())
+    audioCtxRef.current?.close()
+    streamRef.current   = null
+    audioCtxRef.current = null
+  }
+
+  // Stop recognition without triggering onend auto-restart
+  function _stopRecognition() {
+    if (recognitionRef.current) {
+      recognitionRef.current.onend = null
+      recognitionRef.current.abort()
+      recognitionRef.current = null
+    }
+  }
+
+  function startVoice() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SpeechRecognition) return alert('Voice input is not supported in this browser. Please use Chrome or Edge.')
+
+    // Clean up any previous session first
+    _stopRecognition()
+    _stopAudio()
+
+    // ── Request mic with browser-level audio enhancements ──────────────────
+    navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,   // removes echo
+        noiseSuppression: true,   // filters background noise
+        autoGainControl:  true,   // auto-boosts low volume mic input
+        channelCount:     1,      // mono — optimal for speech
+        sampleRate:       16000,  // ideal sample rate for speech recognition
+      }
+    })
+    .then(stream => {
+      streamRef.current = stream
+
+      // ── Web Audio gain boost on top of browser constraints ──────────────
+      const audioCtx   = new AudioContext()
+      audioCtxRef.current = audioCtx
+
+      const source      = audioCtx.createMediaStreamSource(stream)
+      const gainNode    = audioCtx.createGain()
+      gainNode.gain.value = 2.5   // amplify 2.5× — tune between 1.5–4.0 as needed
+
+      const destination = audioCtx.createMediaStreamDestination()
+      source.connect(gainNode)
+      gainNode.connect(destination)
+
+      // ── Wire up SpeechRecognition ────────────────────────────────────────
+      const recognition = new SpeechRecognition()
+      recognition.lang            = 'en-IN'
+      recognition.interimResults  = true
+      recognition.continuous      = true   // keeps mic open; no auto-stop
+      recognition.maxAlternatives = 1      // faster processing
+
+      recognitionRef.current = recognition
+
+      setListening(true)
+      setTranscript('')
+      transcriptRef.current = ''
+
+      recognition.onresult = (e) => {
+        let full = ''
+        for (let i = 0; i < e.results.length; i++) {
+          full += e.results[i][0].transcript
+        }
+        setTranscript(full)
+        transcriptRef.current = full
+      }
+
+      recognition.onerror = (e) => {
+        if (e.error === 'no-speech') return   // silence — keep listening
+        if (e.error === 'aborted')   return   // intentional — ignore
+        alert('Voice error: ' + e.error)
+        setListening(false)
+        setTranscript('')
+        transcriptRef.current = ''
+        _stopAudio()
+      }
+
+      recognition.onend = () => {
+        // If transcript is still empty, browser timed out — restart automatically
+        if (recognitionRef.current && transcriptRef.current === '') {
+          try { recognition.start() } catch { /* already started */ }
+        } else {
+          setListening(false)
+          _stopAudio()
+        }
+      }
+
+      recognition.start()
+    })
+    .catch(err => {
+      alert('Microphone access denied or unavailable: ' + err.message)
+      setListening(false)
+    })
+  }
+
+  function cancelVoice() {
+    _stopRecognition()
+    _stopAudio()
+    setListening(false)
+    setTranscript('')
+    transcriptRef.current = ''
+  }
+
+  function sendVoice() {
+    _stopRecognition()
+    _stopAudio()
+    const final = transcriptRef.current.trim()
+    const files = [...attachedFilesRef.current]
+    setTranscript('')
+    transcriptRef.current = ''
+    setListening(false)
+    if (final || files.length > 0) {
+      setAttachedFiles([])
+      _doSend(final || '📎 Please analyse the attached file.', files, false)
+    }
+  }
+  // ─── End voice ──────────────────────────────────────────────────────────────
+
   async function loadConversation(convId) {
     setLoadingHistory(true)
     setMessages([])
     setConversationId(convId)
     try {
-      const data = await apiFetch(`/conversations/${getSupervisorId()}/${convId}`)
+      const supId = supervisorId || await getSupervisorId()
+      const data = await apiFetch(`/conversations/${supId}/${convId}`)
       setMessages((data.messages || []).map(m => ({
         role: m.role, content: m.content, messageId: m.id, conversationId: convId,
       })))
@@ -80,7 +221,7 @@ export default function Chat() {
   function newChat() { setMessages([]); setConversationId(null); setAttachedFiles([]) }
 
   async function _doSend(query, files = [], skipAddUserMsg = false, attempt = 0) {
-    if (!query || loading) return
+    if ((!query && files.length === 0) || loading) return
 
     if (!skipAddUserMsg) {
       setMessages(prev => [...prev, {
@@ -97,11 +238,11 @@ export default function Chat() {
     try {
       let fullMessage = query
       if (files.length > 0) {
-        const fileContext = files.map(f => {
-          if (f.mediaType.startsWith('image/')) return null
-          return `[Attached file: ${f.name}]\n(Contents available for analysis)`
-        }).filter(Boolean).join('\n\n')
-        if (fileContext) fullMessage = `${query}\n\n${fileContext}`
+        const nonImageContext = files
+          .filter(f => !f.mediaType.startsWith('image/'))
+          .map(f => `[Attached file: ${f.name}]\n(Contents available for analysis)`)
+          .join('\n\n')
+        if (nonImageContext) fullMessage = `${query}\n\n${nonImageContext}`
       }
 
       const contentParts = []
@@ -113,11 +254,13 @@ export default function Chat() {
         }
       })
 
+      const supId = supervisorId || await getSupervisorId()
+
       const data = await apiFetch('/chat', {
         method: 'POST',
         body: {
-          message: fullMessage,
-          supervisorId: getSupervisorId(),
+          message: fullMessage || '📎 Please analyse the attached file.',
+          supervisorId: supId,
           conversationId: conversationId || undefined,
           attachments: contentParts.length > 0 ? contentParts : undefined,
         },
@@ -149,7 +292,7 @@ export default function Chat() {
 
   async function sendMessage(text) {
     const query = (text || input).trim()
-    if (!query || loading) return
+    if ((!query && attachedFiles.length === 0) || loading) return
     const files = [...attachedFiles]
     setInput('')
     setAttachedFiles([])
@@ -219,20 +362,17 @@ export default function Chat() {
     <div className="h-screen flex flex-col bg-parchment">
       <Navbar />
 
-      {/* Offline banner */}
       {!isOnline && (
         <div className="bg-gray-800 text-gray-100 py-1.5 px-4 text-xs font-mukta flex items-center justify-center gap-2">
           <span>📶</span> You're offline — messages will retry when your connection returns.
         </div>
       )}
 
-      {/* Disclaimer */}
       <div className="bg-yellow-50 border-b-2 border-yellow-200 px-6 py-2 flex items-start gap-2 text-xs text-yellow-800 leading-snug flex-shrink-0">
         <span>⚠️</span>
         <span><strong>Advisory Disclaimer:</strong> AI-generated guidance only. Always verify with a licensed Agricultural Extension Officer or nearest KVK before applying at scale.</span>
       </div>
 
-      {/* Body */}
       <div className="flex-1 flex overflow-hidden">
         <Sidebar
           currentConvId={conversationId}
@@ -242,10 +382,8 @@ export default function Chat() {
           onClose={() => setSidebarOpen(false)}
         />
 
-        {/* Main */}
         <div className="flex-1 flex flex-col overflow-hidden items-center">
 
-          {/* Toolbar */}
           <div className="w-full max-w-[800px] flex items-center gap-2 px-4 pt-1.5">
             <button
               className="md:hidden bg-transparent border-none font-mukta text-sm text-forest cursor-pointer py-2"
@@ -264,7 +402,6 @@ export default function Chat() {
             )}
           </div>
 
-          {/* Chat area */}
           <div className="flex-1 overflow-y-auto w-full py-6 flex flex-col items-center gap-0 scroll-smooth">
             {loadingHistory && (
               <p className="text-center py-8 text-gray-400 text-sm font-lora italic">Loading conversation…</p>
@@ -331,59 +468,115 @@ export default function Chat() {
           <div className="w-full bg-parchment px-4 pt-3 pb-4 flex-shrink-0 flex flex-col items-center">
             <div className="w-full max-w-[800px]">
 
-              {/* File previews */}
               {attachedFiles.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mb-2">
                   {attachedFiles.map(f => (
-                    <div key={f.name} className="flex items-center gap-1.5 bg-moss border border-green-200 rounded-lg px-2.5 py-1 text-xs font-mukta text-forest-mid max-w-[220px]">
-                      <span>📎</span>
-                      <span className="truncate">{f.name}</span>
-                      <button onClick={() => removeFile(f.name)} className="bg-transparent border-none cursor-pointer text-gray-400 hover:text-red-500 text-sm leading-none p-0 flex-shrink-0">✕</button>
+                    <div key={f.name} className="flex items-center gap-2 bg-moss border border-green-300 rounded-lg px-3 py-1.5 font-mukta text-forest-mid max-w-[240px]">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66L9.41 17.41a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                      <span className="truncate text-sm font-semibold">{f.name}</span>
+                      <button onClick={() => removeFile(f.name)} className="bg-transparent border-none cursor-pointer text-gray-400 hover:text-red-500 text-base leading-none p-0 flex-shrink-0">✕</button>
                     </div>
                   ))}
                 </div>
               )}
 
-              {/* Input box */}
-              <div className="w-full bg-white border-2 border-green-200 focus-within:border-forest-light rounded-2xl px-3.5 py-3 flex items-end gap-2 shadow-card transition-colors duration-150">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept={ACCEPTED_TYPES}
-                  multiple
-                  className="hidden"
-                  onChange={handleFileChange}
-                />
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={loading}
-                  title="Attach file"
-                  className="bg-transparent border-none cursor-pointer text-xl text-gray-400 hover:text-forest-mid transition-colors p-0.5 flex-shrink-0 leading-none disabled:opacity-50"
-                >
-                  📎
-                </button>
-                <textarea
-                  ref={textareaRef}
-                  placeholder="Describe your crop issue or attach a file…"
-                  value={input}
-                  onChange={handleInputChange}
-                  onKeyDown={handleKeyDown}
-                  disabled={loading}
-                  rows={1}
-                  className="flex-1 bg-transparent border-none outline-none font-mukta text-base text-forest resize-none min-h-6 max-h-40 leading-snug placeholder:text-gray-400 disabled:opacity-60"
-                />
-                <button
-                  onClick={() => sendMessage()}
-                  disabled={loading || (!input.trim() && attachedFiles.length === 0)}
-                  title="Send (Enter)"
-                  className="w-10 h-10 bg-forest hover:bg-forest-light text-amber-light rounded-xl flex items-center justify-center text-base cursor-pointer transition-all duration-150 hover:scale-105 disabled:opacity-45 disabled:cursor-not-allowed disabled:scale-100 flex-shrink-0"
-                >
-                  ➤
-                </button>
-              </div>
+              {listening ? (
+                <div className="w-full bg-white border-2 border-red-300 rounded-2xl px-4 py-3 flex items-center gap-3 shadow-card">
+                  <div className="w-3 h-3 rounded-full bg-red-500 flex-shrink-0" style={{ animation: 'micpulse 1s ease-in-out infinite' }} />
+
+                  {transcript ? (
+                    <span className="flex-1 font-mukta text-sm text-forest">{transcript}</span>
+                  ) : (
+                    <div className="flex items-center gap-[3px] flex-1 h-7">
+                      {[...Array(32)].map((_, i) => (
+                        <div
+                          key={i}
+                          className="bg-forest rounded-full w-[3px] origin-center"
+                          style={{
+                            height: '100%',
+                            animation: `wavebar ${0.4 + (i % 4) * 0.1}s ease-in-out infinite alternate`,
+                            animationDelay: `${i * 0.03}s`,
+                            transform: 'scaleY(0.3)',
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {transcript && (
+                    <button
+                      onClick={sendVoice}
+                      className="w-9 h-9 rounded-xl bg-forest hover:bg-forest-light border-none cursor-pointer flex items-center justify-center flex-shrink-0 transition-colors"
+                      title="Send"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                    </button>
+                  )}
+
+                  <button
+                    onClick={cancelVoice}
+                    className="w-9 h-9 rounded-full bg-red-100 hover:bg-red-200 border-none cursor-pointer flex items-center justify-center flex-shrink-0 transition-colors"
+                    title="Cancel"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                  </button>
+                </div>
+              ) : (
+                <div className="w-full bg-white border-2 border-green-200 focus-within:border-forest-light rounded-2xl px-3.5 py-3 flex items-end gap-2 shadow-card transition-colors duration-150">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept={ACCEPTED_TYPES}
+                    multiple
+                    className="hidden"
+                    onChange={handleFileChange}
+                  />
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={loading}
+                    title="Attach file"
+                    className="bg-transparent border-none cursor-pointer text-gray-400 hover:text-forest-mid transition-colors p-0.5 flex-shrink-0 leading-none disabled:opacity-50"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66L9.41 17.41a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                    </svg>
+                  </button>
+                  <button
+                    onClick={startVoice}
+                    disabled={loading}
+                    title="Voice input (Hindi/English)"
+                    className="bg-transparent border-none cursor-pointer text-gray-400 hover:text-forest-mid transition-colors p-0.5 flex-shrink-0 leading-none disabled:opacity-50"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="9" y="2" width="6" height="11" rx="3"/>
+                      <path d="M5 10a7 7 0 0 0 14 0"/>
+                      <line x1="12" y1="19" x2="12" y2="22"/>
+                      <line x1="8" y1="22" x2="16" y2="22"/>
+                    </svg>
+                  </button>
+                  <textarea
+                    ref={textareaRef}
+                    placeholder="Describe your crop issue or attach a file…"
+                    value={input}
+                    onChange={handleInputChange}
+                    onKeyDown={handleKeyDown}
+                    disabled={loading}
+                    rows={1}
+                    className="flex-1 bg-transparent border-none outline-none font-mukta text-base text-forest resize-none min-h-6 max-h-40 leading-snug placeholder:text-gray-400 disabled:opacity-60"
+                  />
+                  <button
+                    onClick={() => sendMessage()}
+                    disabled={loading || (!input.trim() && attachedFiles.length === 0)}
+                    title="Send (Enter)"
+                    className="w-10 h-10 bg-forest hover:bg-forest-light text-amber-light rounded-xl flex items-center justify-center text-base cursor-pointer transition-all duration-150 hover:scale-105 disabled:opacity-45 disabled:cursor-not-allowed disabled:scale-100 flex-shrink-0"
+                  >
+                    ➤
+                  </button>
+                </div>
+              )}
 
               <p className="text-[0.75rem] text-gray-400 text-center mt-1.5 font-mukta">
-                Press Enter to send · Shift+Enter for new line · 📎 attach PDF, image, or CSV
+                Press Enter to send · Shift+Enter for new line · 📎 attach PDF, image, or CSV · 🎤 voice input
               </p>
             </div>
           </div>
