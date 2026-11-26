@@ -54,7 +54,7 @@ const SUPPORTED_DOC_TYPES = ['application/pdf', 'text/plain', 'text/csv']
 // FIX #1: accept attachments param and build multipart message
 export async function generateResponse(userMessage, history = [], attachments = []) {
   const model = genAI.getGenerativeModel({
-    model: 'gemini-3.8-flash',
+    model: 'gemini-2.5-flash',
     systemInstruction: SYSTEM_PROMPT,
     generationConfig: {
       temperature: 0.4,
